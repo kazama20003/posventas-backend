@@ -1,10 +1,11 @@
 generator client {
-  provider = "prisma-client"
+  provider     = "prisma-client-js"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
 }
 
 datasource db {
-  provider = "postgresql" 
-  url      = env("DATABASE_URL")
+  provider = "postgresql"
 }
 
 /*
@@ -48,11 +49,27 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
-  stores    Store[]
-  users     User[]
+  // Relations (bidirectional)
+  stores              Store[]
+  users               User[]
+  roles               Role[]
+  categories          Category[]
+  suppliers           Supplier[]
+  products            Product[]
+  productVariants     ProductVariant[]
+  warehouses          Warehouse[]   
+  inventories         Inventory[]
+  inventoryMovements  InventoryMovement[]
+  purchaseOrders      PurchaseOrder[]
+  customers           Customer[]
+  orders              Order[]
+  payments            Payment[]
+  documents           Document[]
+  auditLogs           AuditLog[]
+  appSettings         AppSetting[]
 
   @@unique([name])
+  @@index([name])
 }
 
 model Store {
@@ -67,27 +84,43 @@ model Store {
   tenant Tenant @relation(fields: [tenantId], references: [id])
   // warehouse for stock
   warehouses Warehouse[]
+  orders     Order[]
+  purchaseOrders PurchaseOrder[]
+  documents  Document[]
 
   @@index([tenantId])
   @@unique([tenantId, code])
+  @@index([tenantId, createdAt])
 }
 
-model User {
-  id         String   @id @default(uuid()) @db.Uuid
-  tenantId   String   @db.Uuid
-  email      String
-  password   String
-  displayName String?
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  model User {
+    id          String   @id @default(uuid()) @db.Uuid
+    tenantId    String   @db.Uuid
+    
+    email       String
+    password    String
 
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-  roles  UserRole[]
+    displayName String?
+    ruc         String?   @db.VarChar(11)
+    phone       String?   @db.VarChar(20)
 
-  @@unique([tenantId, email])
-  @@index([tenantId])
-}
+    isActive    Boolean   @default(true)
+    lastLoginAt DateTime?
+    deletedAt   DateTime?
+
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+
+    tenant Tenant @relation(fields: [tenantId], references: [id])
+    roles  UserRole[]
+
+    @@unique([tenantId, email])
+    @@unique([tenantId, ruc])
+    @@index([tenantId])
+    @@index([tenantId, createdAt])
+    @@index([phone])
+  }
+
 
 model Role {
   id        String   @id @default(uuid()) @db.Uuid
@@ -99,6 +132,7 @@ model Role {
   users  UserRole[]
 
   @@unique([tenantId, name])
+  @@index([tenantId])
 }
 
 model UserRole {
@@ -110,6 +144,8 @@ model UserRole {
   role Role @relation(fields: [roleId], references: [id])
 
   @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
 }
 
 model Category {
@@ -119,12 +155,15 @@ model Category {
   parentId  String?  @db.Uuid
   createdAt DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id])
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
   parent   Category? @relation("CategoryChildren", fields: [parentId], references: [id])
   children Category[] @relation("CategoryChildren")
 
+  products Product[]
+
   @@unique([tenantId, name])
   @@index([tenantId])
+  @@index([tenantId, createdAt])
 }
 
 model Supplier {
@@ -136,7 +175,9 @@ model Supplier {
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
   purchaseOrders PurchaseOrder[]
+
   @@index([tenantId])
+  @@index([tenantId, createdAt])
 }
 
 model Product {
@@ -155,6 +196,7 @@ model Product {
 
   @@index([tenantId])
   @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
 }
 
 model ProductVariant {
@@ -162,35 +204,45 @@ model ProductVariant {
   tenantId     String   @db.Uuid
   productId    String   @db.Uuid
   sku          String
-  barcode      String? 
+  barcode      String?
   attributes   Json?    // color/size etc as JSON
-  cost         Float?   // last cost
+  cost         Decimal? @db.Decimal(12,2) // last cost
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   deletedAt    DateTime?
 
+  tenant  Tenant @relation(fields: [tenantId], references: [id])
   product Product @relation(fields: [productId], references: [id])
+
   // stock per warehouse handled in Inventory
-  inventories Inventory[]
-  orderLines  OrderLine[]
+  inventories   Inventory[]
+  orderLines    OrderLine[]
+  movements     InventoryMovement[]
+  purchaseLines PurchaseOrderLine[]
 
   @@unique([tenantId, sku])
   @@index([tenantId])
+  @@index([tenantId, createdAt])
 }
 
 model Warehouse {
-  id       String  @id @default(uuid()) @db.Uuid
-  storeId  String  @db.Uuid
-  name     String
-  code     String?
+  id        String  @id @default(uuid()) @db.Uuid
+  tenantId  String  @db.Uuid
+  storeId   String  @db.Uuid
+  name      String
+  code      String?
   createdAt DateTime @default(now())
 
-  store Store @relation(fields: [storeId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  store  Store  @relation(fields: [storeId], references: [id])
+
   inventories Inventory[]
-  movements InventoryMovement[]
+  movements   InventoryMovement[]
 
   @@unique([storeId, code])
+  @@index([tenantId])
   @@index([storeId])
+  @@index([tenantId, createdAt])
 }
 
 /*
@@ -208,12 +260,13 @@ model Inventory {
   reserved      Int      @default(0) // reservations for pending orders
   updatedAt     DateTime @updatedAt
 
-  tenant      Tenant @relation(fields: [tenantId], references: [id])
-  variant     ProductVariant @relation(fields: [variantId], references: [id])
-  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
 
   @@unique([variantId, warehouseId])
   @@index([tenantId])
+  @@index([tenantId, updatedAt])
 }
 
 model InventoryMovement {
@@ -227,9 +280,12 @@ model InventoryMovement {
   createdById  String? @db.Uuid
   createdAt    DateTime @default(now())
 
-  tenant      Tenant @relation(fields: [tenantId], references: [id])
-  variant     ProductVariant @relation(fields: [variantId], references: [id])
-  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
 }
 
 model PurchaseOrder {
@@ -242,22 +298,28 @@ model PurchaseOrder {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
   supplier Supplier @relation(fields: [supplierId], references: [id])
+  store    Store? @relation(fields: [storeId], references: [id])
   lines    PurchaseOrderLine[]
 
   @@index([tenantId])
   @@unique([tenantId, code])
+  @@index([tenantId, createdAt])
 }
 
 model PurchaseOrderLine {
-  id             String   @id @default(uuid()) @db.Uuid
-  purchaseOrderId String  @db.Uuid
-  variantId      String   @db.Uuid
-  quantity       Int
-  unitCost       Float
+  id              String   @id @default(uuid()) @db.Uuid
+  purchaseOrderId String   @db.Uuid
+  variantId       String   @db.Uuid
+  quantity        Int
+  unitCost        Decimal  @db.Decimal(12,2)
 
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
   variant       ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([purchaseOrderId])
+  @@index([variantId])
 }
 
 model Customer {
@@ -268,9 +330,11 @@ model Customer {
   phone      String?
   createdAt  DateTime @default(now())
   addresses  CustomerAddress[]
+  orders     Order[]
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
   @@index([tenantId])
+  @@index([tenantId, createdAt])
 }
 
 model CustomerAddress {
@@ -284,30 +348,34 @@ model CustomerAddress {
   country    String?
 
   customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
 }
 
 model Order {
-  id            String   @id @default(uuid()) @db.Uuid
-  tenantId      String   @db.Uuid
-  storeId       String   @db.Uuid
-  customerId    String?  @db.Uuid
-  code          String
-  status        OrderStatus @default(PENDING)
-  totalAmount   Float
-  taxAmount     Float
-  discountAmount Float @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  version       Int      @default(1) // optimistic lock
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @db.Uuid
+  storeId        String   @db.Uuid
+  customerId     String?  @db.Uuid
+  code           String
+  status         OrderStatus @default(PENDING)
+  totalAmount    Decimal  @db.Decimal(12,2)
+  taxAmount      Decimal  @db.Decimal(12,2)
+  discountAmount Decimal  @db.Decimal(12,2) @default("0.00")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  version        Int      @default(1) // optimistic lock
 
   tenant   Tenant @relation(fields: [tenantId], references: [id])
   store    Store  @relation(fields: [storeId], references: [id])
   customer Customer? @relation(fields: [customerId], references: [id])
   lines    OrderLine[]
   payments Payment[]
+  documents Document[]
 
   @@index([tenantId, storeId])
   @@unique([tenantId, code])
+  @@index([tenantId, createdAt])
 }
 
 model OrderLine {
@@ -315,19 +383,22 @@ model OrderLine {
   orderId   String   @db.Uuid
   variantId String   @db.Uuid
   quantity  Int
-  unitPrice Float
-  lineTotal Float
+  unitPrice Decimal @db.Decimal(12,2)
+  lineTotal Decimal @db.Decimal(12,2)
   createdAt DateTime @default(now())
 
   order   Order @relation(fields: [orderId], references: [id])
   variant ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([orderId])
+  @@index([variantId])
 }
 
 model Payment {
   id           String   @id @default(uuid()) @db.Uuid
   tenantId     String   @db.Uuid
   orderId      String?  @db.Uuid
-  amount       Float
+  amount       Decimal  @db.Decimal(12,2)
   provider     PaymentProvider
   providerRef  String?  // transaction id from gateway
   status       PaymentStatus @default(PENDING)
@@ -335,9 +406,10 @@ model Payment {
   createdAt    DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
-  order  Order @relation(fields: [orderId], references: [id])
+  order  Order? @relation(fields: [orderId], references: [id])
 
   @@index([tenantId, orderId])
+  @@index([tenantId, createdAt])
 }
 
 model Document {
@@ -351,6 +423,11 @@ model Document {
   createdAt    DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
+  store  Store? @relation(fields: [storeId], references: [id])
+  order  Order? @relation(fields: [orderId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
 }
 
 model AuditLog {
@@ -365,19 +442,23 @@ model AuditLog {
   ip         String?
   createdAt  DateTime @default(now())
 
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
   @@index([tenantId, resource, resourceId])
+  @@index([tenantId, createdAt])
 }
 
 /*
   Utility table: sequences, settings, etc.
 */
 model AppSetting {
-  id      String @id @default(uuid()) @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
   tenantId String @db.Uuid
-  key     String
-  value   String
+  key      String
+  value    String
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@unique([tenantId, key])
+  @@index([tenantId])
 }
