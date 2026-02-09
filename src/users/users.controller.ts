@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Headers,
+  Param,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -7,28 +17,62 @@ import { UpdateUserDto } from './dto/update-user.dto';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  private getTenantId(
+    headers: Record<string, string | string[] | undefined>,
+  ): string {
+    const raw = headers['x-tenant-id'];
+    const tenantId = Array.isArray(raw) ? raw[0] : raw;
+
+    if (
+      !tenantId ||
+      typeof tenantId !== 'string' ||
+      tenantId.trim().length === 0
+    ) {
+      throw new BadRequestException('Falta el header x-tenant-id');
+    }
+    return tenantId.trim();
+  }
+
   @Post()
-  create(@Body() createUserDto: CreateUserDto) {
-    return this.usersService.create(createUserDto);
+  create(
+    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Body() createUserDto: CreateUserDto,
+  ) {
+    const tenantId = this.getTenantId(headers);
+    return this.usersService.create(tenantId, createUserDto);
   }
 
   @Get()
-  findAll() {
-    return this.usersService.findAll();
+  findAll(@Headers() headers: Record<string, string | string[] | undefined>) {
+    const tenantId = this.getTenantId(headers);
+    return this.usersService.findAll(tenantId);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(+id);
+  findOne(
+    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Param('id') id: string,
+  ) {
+    const tenantId = this.getTenantId(headers);
+    return this.usersService.findOne(tenantId, id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(+id, updateUserDto);
+  update(
+    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Param('id') id: string,
+    @Body() updateUserDto: UpdateUserDto,
+  ) {
+    const tenantId = this.getTenantId(headers);
+    return this.usersService.update(tenantId, id, updateUserDto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(+id);
+  remove(
+    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Param('id') id: string,
+  ) {
+    const tenantId = this.getTenantId(headers);
+    return this.usersService.remove(tenantId, id);
   }
 }

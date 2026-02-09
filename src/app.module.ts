@@ -9,6 +9,7 @@ import databaseConfig from './config/database.config';
 import { envValidationSchema } from './config/env.validation';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
   imports: [
@@ -19,12 +20,13 @@ import { AuthModule } from './auth/auth.module';
       load: [appConfig, databaseConfig],
       validationSchema: envValidationSchema,
       validationOptions: {
-        abortEarly: true,
-        allowUnknown: false,
+        abortEarly: false,
+        allowUnknown: true,
       },
     }),
     UsersModule,
     AuthModule,
+    PrismaModule,
   ],
   controllers: [AppController],
   providers: [AppService],
