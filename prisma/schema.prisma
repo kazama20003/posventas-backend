@@ -47,6 +47,34 @@ enum PurchaseOrderStatus {
   CANCELED
 }
 
+enum SubscriptionPlan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum SubscriptionProvider {
+  STRIPE
+  OTHER
+}
+
+enum SubscriptionPaymentMethod {
+  YAPE
+  STRIPE
+  CARD
+  CASH
+  BANK_TRANSFER
+  PAYPAL
+  OTHER
+}
+
 /**
  * Sequence generator for human-readable codes.
  * Example keys:
@@ -68,8 +96,12 @@ model Sequence {
 }
 
 model Tenant {
-  id        String    @id @default(uuid()) @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
   name      String
+
+  /// ✅ para URLs tipo /mi-empresa (multi-tenant frontend)
+  slug      String   @unique
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -93,20 +125,60 @@ model Tenant {
   auditLogs          AuditLog[]
   appSettings        AppSetting[]
   sequences          Sequence[]
+  subscription       Subscription?
 
-  @@unique([name])
+  // ❌ NO pongas unique global por name (pueden existir nombres repetidos)
   @@index([name])
   @@index([deletedAt])
+  @@index([slug])
+}
+
+model Subscription {
+  id                     String               @id @default(uuid()) @db.Uuid
+  tenantId               String               @db.Uuid
+
+  plan                   SubscriptionPlan     @default(FREE)
+  status                 SubscriptionStatus   @default(TRIALING)
+  provider               SubscriptionProvider @default(STRIPE)
+
+  providerCustomerId     String?
+  providerSubscriptionId String?
+
+  /// (Opcional) Puedes dejarlo, pero NO lo uses como “verdad” de pago recurrente
+  paymentMethods         SubscriptionPaymentMethod[]
+
+  /// ✅ SaaS real: periodo actual
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+
+  /// ✅ trial real
+  trialEndsAt            DateTime?
+
+  cancelAtPeriodEnd      Boolean              @default(false)
+  canceledAt             DateTime?
+
+  /// ✅ para debugging / salud de webhooks
+  lastProviderEventAt    DateTime?
+
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  deletedAt              DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, deletedAt])
 }
 
 model Store {
-  id        String    @id @default(uuid()) @db.Uuid
-  tenantId  String    @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
   name      String
   address   String?
   code      String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   deletedAt DateTime?
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
@@ -116,6 +188,9 @@ model Store {
   orders         Order[]
   purchaseOrders PurchaseOrder[]
   documents      Document[]
+
+  /// ✅ acceso por sucursal (opcional pero recomendado)
+  userStores UserStore[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -147,6 +222,9 @@ model User {
   // ✅ inverse relation for InventoryMovement.createdBy
   inventoryMovementsCreated InventoryMovement[] @relation("InventoryMovementCreatedBy")
 
+  /// ✅ acceso por sucursal (opcional)
+  stores UserStore[]
+
   @@unique([tenantId, email])
   @@unique([tenantId, ruc])
   @@index([tenantId])
@@ -155,11 +233,28 @@ model User {
   @@index([tenantId, deletedAt])
 }
 
+/// ✅ tabla para controlar a qué sucursales puede entrar cada usuario
+model UserStore {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  storeId   String   @db.Uuid
+  createdAt DateTime @default(now())
+  deletedAt DateTime?
+
+  user  User  @relation(fields: [userId], references: [id])
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@unique([userId, storeId])
+  @@index([userId])
+  @@index([storeId])
+  @@index([deletedAt])
+}
+
 model Role {
-  id        String    @id @default(uuid()) @db.Uuid
-  tenantId  String    @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
   name      String
-  createdAt DateTime  @default(now())
+  createdAt DateTime @default(now())
   deletedAt DateTime?
 
   tenant Tenant     @relation(fields: [tenantId], references: [id])
@@ -184,11 +279,11 @@ model UserRole {
 }
 
 model Category {
-  id        String    @id @default(uuid()) @db.Uuid
-  tenantId  String    @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
   name      String
-  parentId  String?   @db.Uuid
-  createdAt DateTime  @default(now())
+  parentId  String?  @db.Uuid
+  createdAt DateTime @default(now())
   deletedAt DateTime?
 
   tenant   Tenant     @relation(fields: [tenantId], references: [id])
@@ -203,12 +298,12 @@ model Category {
 }
 
 model Supplier {
-  id        String    @id @default(uuid()) @db.Uuid
-  tenantId  String    @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
   name      String
   contact   String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   deletedAt DateTime?
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id])
@@ -220,17 +315,17 @@ model Supplier {
 }
 
 model Product {
-  id          String    @id @default(uuid()) @db.Uuid
-  tenantId    String    @db.Uuid
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
   name        String
   description String?
-  categoryId  String?   @db.Uuid
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  categoryId  String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
   deletedAt   DateTime?
 
-  tenant   Tenant           @relation(fields: [tenantId], references: [id])
-  category Category?        @relation(fields: [categoryId], references: [id])
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  category Category? @relation(fields: [categoryId], references: [id])
   variants ProductVariant[]
 
   @@unique([tenantId, name])
@@ -240,15 +335,15 @@ model Product {
 }
 
 model ProductVariant {
-  id         String    @id @default(uuid()) @db.Uuid
-  tenantId   String    @db.Uuid
-  productId  String    @db.Uuid
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @db.Uuid
+  productId  String   @db.Uuid
   sku        String
   barcode    String?
   attributes Json?
-  cost       Decimal?  @db.Decimal(12, 2)
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  cost       Decimal? @db.Decimal(12, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
   deletedAt  DateTime?
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id])
@@ -267,13 +362,13 @@ model ProductVariant {
 }
 
 model Warehouse {
-  id        String    @id @default(uuid()) @db.Uuid
-  tenantId  String    @db.Uuid
-  storeId   String    @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  storeId   String   @db.Uuid
   name      String
   code      String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   deletedAt DateTime?
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
@@ -290,13 +385,13 @@ model Warehouse {
 }
 
 model Inventory {
-  id          String    @id @default(uuid()) @db.Uuid
-  tenantId    String    @db.Uuid
-  variantId   String    @db.Uuid
-  warehouseId String    @db.Uuid
-  quantity    Int       @default(0)
-  reserved    Int       @default(0)
-  updatedAt   DateTime  @updatedAt
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  variantId   String   @db.Uuid
+  warehouseId String   @db.Uuid
+  quantity    Int      @default(0)
+  reserved    Int      @default(0)
+  updatedAt   DateTime @updatedAt
   deletedAt   DateTime?
 
   tenant    Tenant         @relation(fields: [tenantId], references: [id])
@@ -310,15 +405,15 @@ model Inventory {
 }
 
 model InventoryMovement {
-  id          String    @id @default(uuid()) @db.Uuid
-  tenantId    String    @db.Uuid
-  variantId   String    @db.Uuid
-  warehouseId String    @db.Uuid
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  variantId   String   @db.Uuid
+  warehouseId String   @db.Uuid
   delta       Int
   reason      String
   referenceId String?
-  createdById String?   @db.Uuid
-  createdAt   DateTime  @default(now())
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
   deletedAt   DateTime?
 
   tenant    Tenant         @relation(fields: [tenantId], references: [id])
@@ -345,9 +440,9 @@ model PurchaseOrder {
   updatedAt  DateTime            @updatedAt
   deletedAt  DateTime?
 
-  tenant   Tenant              @relation(fields: [tenantId], references: [id])
-  supplier Supplier            @relation(fields: [supplierId], references: [id])
-  store    Store?              @relation(fields: [storeId], references: [id])
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+  store    Store?   @relation(fields: [storeId], references: [id])
   lines    PurchaseOrderLine[]
 
   @@unique([tenantId, code])
@@ -358,11 +453,11 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderLine {
-  id              String    @id @default(uuid()) @db.Uuid
-  purchaseOrderId String    @db.Uuid
-  variantId       String    @db.Uuid
+  id              String   @id @default(uuid()) @db.Uuid
+  purchaseOrderId String   @db.Uuid
+  variantId       String   @db.Uuid
   quantity        Int
-  unitCost        Decimal   @db.Decimal(12, 2)
+  unitCost        Decimal  @db.Decimal(12, 2)
   deletedAt       DateTime?
 
   purchaseOrder PurchaseOrder  @relation(fields: [purchaseOrderId], references: [id])
@@ -374,13 +469,13 @@ model PurchaseOrderLine {
 }
 
 model Customer {
-  id        String    @id @default(uuid()) @db.Uuid
-  tenantId  String    @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
   name      String
   email     String?
   phone     String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   deletedAt DateTime?
 
   addresses CustomerAddress[]
@@ -394,8 +489,8 @@ model Customer {
 }
 
 model CustomerAddress {
-  id         String    @id @default(uuid()) @db.Uuid
-  customerId String    @db.Uuid
+  id         String   @id @default(uuid()) @db.Uuid
+  customerId String   @db.Uuid
   line1      String
   line2      String?
   city       String?
@@ -422,6 +517,9 @@ model Order {
   taxAmount      Decimal @default("0.00") @db.Decimal(12, 2)
   discountAmount Decimal @default("0.00") @db.Decimal(12, 2)
 
+  /// ✅ anti-duplicados por reintentos del POS
+  idempotencyKey String?
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -437,20 +535,22 @@ model Order {
   documents Document[]
 
   @@unique([tenantId, code])
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, storeId])
+  @@index([tenantId, storeId, createdAt])
   @@index([tenantId, createdAt])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, deletedAt])
 }
 
 model OrderLine {
-  id        String    @id @default(uuid()) @db.Uuid
-  orderId   String    @db.Uuid
-  variantId String    @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
+  orderId   String   @db.Uuid
+  variantId String   @db.Uuid
   quantity  Int
-  unitPrice Decimal   @db.Decimal(12, 2)
-  lineTotal Decimal   @db.Decimal(12, 2)
-  createdAt DateTime  @default(now())
+  unitPrice Decimal  @db.Decimal(12, 2)
+  lineTotal Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
   deletedAt DateTime?
 
   order   Order          @relation(fields: [orderId], references: [id])
@@ -462,19 +562,19 @@ model OrderLine {
 }
 
 model Payment {
-  id          String          @id @default(uuid()) @db.Uuid
-  tenantId    String          @db.Uuid
-  orderId     String?         @db.Uuid
-  amount      Decimal         @db.Decimal(12, 2)
+  id          String        @id @default(uuid()) @db.Uuid
+  tenantId    String        @db.Uuid
+  orderId     String?       @db.Uuid
+  amount      Decimal       @db.Decimal(12, 2)
   provider    PaymentProvider
   providerRef String?
-  status      PaymentStatus   @default(PENDING)
+  status      PaymentStatus @default(PENDING)
   paidAt      DateTime?
-  createdAt   DateTime        @default(now())
+  createdAt   DateTime      @default(now())
   deletedAt   DateTime?
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
-  order  Order? @relation(fields: [orderId], references: [id])
+  order  Order?  @relation(fields: [orderId], references: [id])
 
   @@index([tenantId, orderId])
   @@index([tenantId, createdAt])
@@ -494,8 +594,8 @@ model Document {
   deletedAt   DateTime?
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
-  store  Store? @relation(fields: [storeId], references: [id])
-  order  Order? @relation(fields: [orderId], references: [id])
+  store  Store?  @relation(fields: [storeId], references: [id])
+  order  Order?  @relation(fields: [orderId], references: [id])
 
   @@index([tenantId])
   @@index([tenantId, createdAt])
@@ -521,8 +621,8 @@ model AuditLog {
 }
 
 model AppSetting {
-  id        String    @id @default(uuid()) @db.Uuid
-  tenantId  String    @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
   key       String
   value     String
   deletedAt DateTime?
