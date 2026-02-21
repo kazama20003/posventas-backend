@@ -4,4 +4,5 @@ export default registerAs('app', () => ({
   port: Number(process.env.PORT),
   nodeEnv: process.env.NODE_ENV as 'development' | 'production' | 'test',
   enableSwagger: process.env.ENABLE_SWAGGER === 'true',
+  corsOrigin: process.env.CORS_ORIGIN as string,
 }));

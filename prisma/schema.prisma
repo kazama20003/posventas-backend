@@ -75,6 +75,24 @@ enum SubscriptionPaymentMethod {
   OTHER
 }
 
+enum UnitOfMeasure {
+  UNIT
+  KG
+  G
+  L
+  ML
+  M
+  CM
+  BOX
+  PACK
+  DOZEN
+}
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+}
+
 /**
  * Sequence generator for human-readable codes.
  * Example keys:
@@ -126,6 +144,7 @@ model Tenant {
   appSettings        AppSetting[]
   sequences          Sequence[]
   subscription       Subscription?
+  authAccounts       AuthAccount[]
 
   // ❌ NO pongas unique global por name (pueden existir nombres repetidos)
   @@index([name])
@@ -202,8 +221,11 @@ model User {
   id       String @id @default(uuid()) @db.Uuid
   tenantId String @db.Uuid
 
-  email    String
-  password String
+  email          String
+  /// ✅ solo para auth local (hash). En Google puede ser null.
+  password       String?
+  emailVerifiedAt DateTime?
+  avatarUrl      String?
 
   displayName String?
   ruc         String? @db.VarChar(11)
@@ -221,6 +243,7 @@ model User {
 
   // ✅ inverse relation for InventoryMovement.createdBy
   inventoryMovementsCreated InventoryMovement[] @relation("InventoryMovementCreatedBy")
+  authAccounts              AuthAccount[]
 
   /// ✅ acceso por sucursal (opcional)
   stores UserStore[]
@@ -230,6 +253,32 @@ model User {
   @@index([tenantId])
   @@index([tenantId, createdAt])
   @@index([phone])
+  @@index([tenantId, deletedAt])
+}
+
+model AuthAccount {
+  id                String       @id @default(uuid()) @db.Uuid
+  tenantId          String       @db.Uuid
+  userId            String       @db.Uuid
+  provider          AuthProvider
+  providerAccountId String
+  accessToken       String?
+  refreshToken      String?
+  tokenType         String?
+  scope             String?
+  expiresAt         DateTime?
+  idToken           String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  deletedAt         DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([tenantId, provider, providerAccountId])
+  @@unique([userId, provider])
+  @@index([tenantId])
+  @@index([userId])
   @@index([tenantId, deletedAt])
 }
 
@@ -340,11 +389,12 @@ model ProductVariant {
   productId  String   @db.Uuid
   sku        String
   barcode    String?
-  attributes Json?
-  cost       Decimal? @db.Decimal(12, 2)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  deletedAt  DateTime?
+  unitOfMeasure UnitOfMeasure @default(UNIT)
+  attributes    Json?
+  cost          Decimal?      @db.Decimal(12, 2)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id])
   product Product @relation(fields: [productId], references: [id])
@@ -456,6 +506,7 @@ model PurchaseOrderLine {
   id              String   @id @default(uuid()) @db.Uuid
   purchaseOrderId String   @db.Uuid
   variantId       String   @db.Uuid
+  unitOfMeasure UnitOfMeasure @default(UNIT)
   quantity        Int
   unitCost        Decimal  @db.Decimal(12, 2)
   deletedAt       DateTime?
@@ -547,6 +598,7 @@ model OrderLine {
   id        String   @id @default(uuid()) @db.Uuid
   orderId   String   @db.Uuid
   variantId String   @db.Uuid
+  unitOfMeasure UnitOfMeasure @default(UNIT)
   quantity  Int
   unitPrice Decimal  @db.Decimal(12, 2)
   lineTotal Decimal  @db.Decimal(12, 2)

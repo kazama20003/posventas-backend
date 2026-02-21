@@ -48,6 +48,11 @@ export class UsersController {
     return this.usersService.findAll(tenantId);
   }
 
+  @Get('tenant/:slug')
+  findTenantBySlug(@Param('slug') slug: string) {
+    return this.usersService.findTenantBySlug(slug);
+  }
+
   @Get(':id')
   findOne(
     @Headers() headers: Record<string, string | string[] | undefined>,

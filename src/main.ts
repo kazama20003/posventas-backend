@@ -14,8 +14,16 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   const envs = app.get<ConfigType<typeof appConfig>>(appConfig.KEY);
+  const corsOrigin = envs.corsOrigin
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
 
   app.setGlobalPrefix('api');
+  app.enableCors({
+    origin: corsOrigin.length === 1 ? corsOrigin[0] : corsOrigin,
+    credentials: true,
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

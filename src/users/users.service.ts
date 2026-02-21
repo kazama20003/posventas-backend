@@ -57,6 +57,33 @@ function handleUniqueError(e: Prisma.PrismaClientKnownRequestError): never {
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async findTenantBySlug(
+    slug: string,
+  ): Promise<{ id: string; slug: string; name: string }> {
+    const normalizedSlug = slug.trim().toLowerCase();
+    if (!normalizedSlug) {
+      throw new BadRequestException('Slug de empresa invalido.');
+    }
+
+    const tenant = await this.prisma.tenant.findFirst({
+      where: {
+        slug: normalizedSlug,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+      },
+    });
+
+    if (!tenant) {
+      throw new NotFoundException('Empresa no encontrada.');
+    }
+
+    return tenant;
+  }
+
   // CREATE (tenantId viene del auth)
   async create(tenantId: string, dto: CreateUserDto): Promise<SafeUser> {
     try {
