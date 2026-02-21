@@ -11,6 +11,7 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { TenantsModule } from './tenants/tenants.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { TenantsModule } from './tenants/tenants.module';
     AuthModule,
     PrismaModule,
     TenantsModule,
+    SubscriptionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
