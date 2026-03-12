@@ -1,14 +1,17 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
-  Headers,
   Param,
   Patch,
   Post,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthJwtPayload } from '../auth/types/auth-jwt-payload.type';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -17,35 +20,19 @@ import { UpdateUserDto } from './dto/update-user.dto';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  private getTenantId(
-    headers: Record<string, string | string[] | undefined>,
-  ): string {
-    const raw = headers['x-tenant-id'];
-    const tenantId = Array.isArray(raw) ? raw[0] : raw;
-
-    if (
-      !tenantId ||
-      typeof tenantId !== 'string' ||
-      tenantId.trim().length === 0
-    ) {
-      throw new BadRequestException('Falta el header x-tenant-id');
-    }
-    return tenantId.trim();
-  }
-
   @Post()
+  @UseGuards(JwtAuthGuard)
   create(
-    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Req() req: Request & { user: AuthJwtPayload },
     @Body() createUserDto: CreateUserDto,
   ) {
-    const tenantId = this.getTenantId(headers);
-    return this.usersService.create(tenantId, createUserDto);
+    return this.usersService.create(req.user.tenantId, createUserDto);
   }
 
   @Get()
-  findAll(@Headers() headers: Record<string, string | string[] | undefined>) {
-    const tenantId = this.getTenantId(headers);
-    return this.usersService.findAll(tenantId);
+  @UseGuards(JwtAuthGuard)
+  findAll(@Req() req: Request & { user: AuthJwtPayload }) {
+    return this.usersService.findAll(req.user.tenantId);
   }
 
   @Get('tenant/:slug')
@@ -54,30 +41,30 @@ export class UsersController {
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   findOne(
-    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Req() req: Request & { user: AuthJwtPayload },
     @Param('id') id: string,
   ) {
-    const tenantId = this.getTenantId(headers);
-    return this.usersService.findOne(tenantId, id);
+    return this.usersService.findOne(req.user.tenantId, id);
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard)
   update(
-    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Req() req: Request & { user: AuthJwtPayload },
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserDto,
   ) {
-    const tenantId = this.getTenantId(headers);
-    return this.usersService.update(tenantId, id, updateUserDto);
+    return this.usersService.update(req.user.tenantId, id, updateUserDto);
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard)
   remove(
-    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Req() req: Request & { user: AuthJwtPayload },
     @Param('id') id: string,
   ) {
-    const tenantId = this.getTenantId(headers);
-    return this.usersService.remove(tenantId, id);
+    return this.usersService.remove(req.user.tenantId, id);
   }
 }

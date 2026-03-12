@@ -158,6 +158,6 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   me(@Req() req: Request & { user: AuthJwtPayload }) {
-    return req.user;
+    return this.authService.me(req.user);
   }
 }

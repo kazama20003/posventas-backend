@@ -1,4 +1,5 @@
 import {
+  ArrayUnique,
   IsEmail,
   IsOptional,
   IsString,
@@ -6,7 +7,18 @@ import {
   MinLength,
   Matches,
   IsBoolean,
+  IsArray,
+  IsIn,
+  IsUUID,
 } from 'class-validator';
+
+export const USER_ROLE_VALUES = [
+  'OWNER',
+  'ADMIN',
+  'SELLER',
+  'CASHIER',
+] as const;
+export type UserRoleValue = (typeof USER_ROLE_VALUES)[number];
 
 export class CreateUserDto {
   @IsEmail()
@@ -36,4 +48,14 @@ export class CreateUserDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsIn(USER_ROLE_VALUES)
+  role?: UserRoleValue;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  storeIds?: string[];
 }

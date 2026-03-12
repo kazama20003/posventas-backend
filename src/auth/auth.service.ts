@@ -10,6 +10,7 @@ import { Prisma, Tenant, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { AuthJwtPayload } from './types/auth-jwt-payload.type';
 import { hashPassword, verifyPassword } from './utils/password.util';
 
 type SafeUser = Omit<User, 'password'>;
@@ -19,6 +20,14 @@ export type AuthResult = {
   token: string;
   user: SafeUser;
   tenant: SafeTenant;
+};
+
+export type AuthMeResult = SafeUser & {
+  tenantSlug: string;
+  roles: Array<{
+    id: string;
+    name: string;
+  }>;
 };
 
 export type GoogleLoginInput = {
@@ -32,7 +41,7 @@ export type GoogleLoginInput = {
   refreshToken?: string;
 };
 
-function toSafeUser(user: User): SafeUser {
+function toSafeUser<T extends User>(user: T): Omit<T, 'password'> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { password, ...safe } = user;
   return safe;
@@ -70,6 +79,10 @@ function isUniqueViolation(
 
 @Injectable()
 export class AuthService {
+  private static readonly FREE_TRIAL_DAYS = 5;
+  private static readonly OWNER_ROLE_NAME = 'OWNER';
+  private static readonly TRIAL_PLAN = 'PRO';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -111,6 +124,26 @@ export class AuthService {
     return Math.random().toString(36).slice(2, 8);
   }
 
+  private buildInitialSubscriptionData(startAt: Date = new Date()): {
+    plan: 'PRO';
+    status: 'TRIALING';
+    currentPeriodStart: Date;
+    currentPeriodEnd: Date;
+    trialEndsAt: Date;
+  } {
+    const trialEndsAt = new Date(
+      startAt.getTime() + AuthService.FREE_TRIAL_DAYS * 24 * 60 * 60 * 1000,
+    );
+
+    return {
+      plan: AuthService.TRIAL_PLAN,
+      status: 'TRIALING',
+      currentPeriodStart: startAt,
+      currentPeriodEnd: trialEndsAt,
+      trialEndsAt,
+    };
+  }
+
   private deriveBusinessNameForGoogle(input: GoogleLoginInput): string {
     const fromInput = input.businessName?.trim();
     if (fromInput) {
@@ -130,7 +163,7 @@ export class AuthService {
     return 'Mi empresa';
   }
 
-  private async createTenantWithFreePlanTx(
+  private async createTenantWithTrialPlanTx(
     tx: Prisma.TransactionClient,
     businessName: string,
     preferredSlug: string,
@@ -151,11 +184,12 @@ export class AuthService {
           },
         });
 
+        const trialStartAt = new Date();
+
         await tx.subscription.create({
           data: {
             tenantId: tenant.id,
-            plan: 'FREE',
-            status: 'TRIALING',
+            ...this.buildInitialSubscriptionData(trialStartAt),
           },
         });
 
@@ -241,6 +275,86 @@ export class AuthService {
     }
   }
 
+  private async ensureTenantRoleTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    roleName: string,
+  ): Promise<{ id: string }> {
+    const existingRole = await tx.role.findFirst({
+      where: { tenantId, name: roleName },
+      select: { id: true, deletedAt: true },
+    });
+
+    if (existingRole) {
+      if (existingRole.deletedAt !== null) {
+        await tx.role.update({
+          where: { id: existingRole.id },
+          data: { deletedAt: null },
+        });
+      }
+      return { id: existingRole.id };
+    }
+
+    try {
+      return await tx.role.create({
+        data: { tenantId, name: roleName },
+        select: { id: true },
+      });
+    } catch (e: unknown) {
+      if (!isUniqueViolation(e)) {
+        throw e;
+      }
+
+      const conflictedRole = await tx.role.findFirst({
+        where: { tenantId, name: roleName },
+        select: { id: true, deletedAt: true },
+      });
+
+      if (!conflictedRole) {
+        throw e;
+      }
+
+      if (conflictedRole.deletedAt !== null) {
+        await tx.role.update({
+          where: { id: conflictedRole.id },
+          data: { deletedAt: null },
+        });
+      }
+
+      return { id: conflictedRole.id };
+    }
+  }
+
+  private async assignRoleToUserTx(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    roleId: string,
+  ): Promise<void> {
+    try {
+      await tx.userRole.create({
+        data: { userId, roleId },
+      });
+    } catch (e: unknown) {
+      if (isUniqueViolation(e)) {
+        return;
+      }
+      throw e;
+    }
+  }
+
+  private async assignOwnerRoleToUserTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    userId: string,
+  ): Promise<void> {
+    const ownerRole = await this.ensureTenantRoleTx(
+      tx,
+      tenantId,
+      AuthService.OWNER_ROLE_NAME,
+    );
+    await this.assignRoleToUserTx(tx, userId, ownerRole.id);
+  }
+
   async register(dto: RegisterDto): Promise<AuthResult> {
     const businessName = dto.businessName.trim();
     if (!businessName) {
@@ -263,11 +377,12 @@ export class AuthService {
           },
         });
 
+        const trialStartAt = new Date();
+
         await tx.subscription.create({
           data: {
             tenantId: tenant.id,
-            plan: 'FREE',
-            status: 'TRIALING',
+            ...this.buildInitialSubscriptionData(trialStartAt),
           },
         });
 
@@ -289,6 +404,8 @@ export class AuthService {
             providerAccountId: normalizedEmail,
           },
         });
+
+        await this.assignOwnerRoleToUserTx(tx, tenant.id, created.id);
 
         return { tenant, user: created };
       });
@@ -404,6 +521,7 @@ export class AuthService {
         }
 
         let tenant: Tenant;
+        let tenantWasCreated = false;
 
         if (input.tenantSlug) {
           const normalizedSlug = this.normalizeTenantSlug(input.tenantSlug);
@@ -414,23 +532,27 @@ export class AuthService {
             },
           });
 
-          tenant =
-            existingTenant ??
-            (await this.createTenantWithFreePlanTx(
+          if (existingTenant) {
+            tenant = existingTenant;
+          } else {
+            tenant = await this.createTenantWithTrialPlanTx(
               tx,
               this.deriveBusinessNameForGoogle(input),
               normalizedSlug,
               false,
-            ));
+            );
+            tenantWasCreated = true;
+          }
         } else {
           const businessName = this.deriveBusinessNameForGoogle(input);
           const generatedSlug = this.slugifyTenantName(businessName);
-          tenant = await this.createTenantWithFreePlanTx(
+          tenant = await this.createTenantWithTrialPlanTx(
             tx,
             businessName,
             generatedSlug,
             true,
           );
+          tenantWasCreated = true;
         }
 
         const tenantId = tenant.id;
@@ -490,6 +612,10 @@ export class AuthService {
           },
         });
 
+        if (tenantWasCreated) {
+          await this.assignOwnerRoleToUserTx(tx, tenantId, createdUser.id);
+        }
+
         return { tenant, user: createdUser };
       });
 
@@ -506,6 +632,53 @@ export class AuthService {
       }
       throw new BadRequestException('No se pudo autenticar con Google.');
     }
+  }
+
+  async me(payload: AuthJwtPayload): Promise<AuthMeResult> {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id: payload.sub,
+        tenantId: payload.tenantId,
+        deletedAt: null,
+        isActive: true,
+      },
+      include: {
+        roles: {
+          select: {
+            role: {
+              select: {
+                id: true,
+                name: true,
+                deletedAt: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado o inactivo.');
+    }
+
+    const { roles, ...safeUser } = toSafeUser(user);
+
+    return {
+      ...safeUser,
+      tenantSlug: payload.tenantSlug,
+      roles: roles
+        .map(({ role }) => role)
+        .filter(
+          (
+            role,
+          ): role is {
+            id: string;
+            name: string;
+            deletedAt: Date | null;
+          } => role !== null && role.deletedAt === null,
+        )
+        .map(({ id, name }) => ({ id, name })),
+    };
   }
 
   getGoogleSuccessRedirectUrl(tenantSlug?: string): string {

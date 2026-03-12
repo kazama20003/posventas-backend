@@ -88,6 +88,11 @@ enum UnitOfMeasure {
   DOZEN
 }
 
+enum ProductType {
+  PHYSICAL
+  SERVICE
+}
+
 enum AuthProvider {
   LOCAL
   GOOGLE
@@ -211,7 +216,8 @@ model Store {
   /// ✅ acceso por sucursal (opcional pero recomendado)
   userStores UserStore[]
 
-  @@unique([tenantId, code])
+  // Active-store code uniqueness is enforced with a partial unique index in SQL migrations.
+  @@index([tenantId, code])
   @@index([tenantId])
   @@index([tenantId, createdAt])
   @@index([tenantId, deletedAt])
@@ -364,14 +370,23 @@ model Supplier {
 }
 
 model Product {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @db.Uuid
-  name        String
-  description String?
-  categoryId  String?  @db.Uuid
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime?
+  id           String      @id @default(uuid()) @db.Uuid
+  tenantId     String      @db.Uuid
+  name         String
+  description  String?
+  categoryId   String?     @db.Uuid
+  images       Json?
+  salePrice    Decimal     @default("0.00") @db.Decimal(12, 2)
+  isActive     Boolean     @default(true)
+  brand        String?
+  trackStock   Boolean     @default(true)
+  taxRate      Decimal     @default("0.00") @db.Decimal(5, 2)
+  minStock     Int         @default(0)
+  productType  ProductType @default(PHYSICAL)
+  visibleInPos Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  deletedAt    DateTime?
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id])
   category Category? @relation(fields: [categoryId], references: [id])
@@ -379,6 +394,7 @@ model Product {
 
   @@unique([tenantId, name])
   @@index([tenantId])
+  @@index([tenantId, isActive])
   @@index([tenantId, createdAt])
   @@index([tenantId, deletedAt])
 }
