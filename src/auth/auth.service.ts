@@ -41,6 +41,11 @@ export type GoogleLoginInput = {
   refreshToken?: string;
 };
 
+const DEFAULT_STORE_NAME = 'Sucursal principal';
+const DEFAULT_STORE_CODE = 'MAIN';
+const DEFAULT_WAREHOUSE_NAME = 'Almacen principal';
+const DEFAULT_WAREHOUSE_CODE = 'MAIN';
+
 function toSafeUser<T extends User>(user: T): Omit<T, 'password'> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { password, ...safe } = user;
@@ -355,6 +360,128 @@ export class AuthService {
     await this.assignRoleToUserTx(tx, userId, ownerRole.id);
   }
 
+  private async ensurePrimaryStoreTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+  ): Promise<{ id: string }> {
+    const activeStore = await tx.store.findFirst({
+      where: {
+        tenantId,
+        deletedAt: null,
+      },
+      orderBy: [{ createdAt: 'asc' }],
+      select: { id: true },
+    });
+
+    if (activeStore) {
+      return activeStore;
+    }
+
+    const mainStore = await tx.store.findFirst({
+      where: {
+        tenantId,
+        code: DEFAULT_STORE_CODE,
+      },
+      select: {
+        id: true,
+        deletedAt: true,
+      },
+    });
+
+    if (mainStore) {
+      await tx.store.update({
+        where: { id: mainStore.id },
+        data: {
+          name: DEFAULT_STORE_NAME,
+          code: DEFAULT_STORE_CODE,
+          deletedAt: null,
+        },
+      });
+
+      return { id: mainStore.id };
+    }
+
+    return tx.store.create({
+      data: {
+        tenantId,
+        name: DEFAULT_STORE_NAME,
+        code: DEFAULT_STORE_CODE,
+      },
+      select: { id: true },
+    });
+  }
+
+  private async ensurePrimaryWarehouseTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    storeId: string,
+  ): Promise<void> {
+    const mainWarehouse = await tx.warehouse.findFirst({
+      where: {
+        storeId,
+        code: DEFAULT_WAREHOUSE_CODE,
+      },
+      select: {
+        id: true,
+        deletedAt: true,
+      },
+    });
+
+    if (mainWarehouse) {
+      if (mainWarehouse.deletedAt !== null) {
+        await tx.warehouse.update({
+          where: { id: mainWarehouse.id },
+          data: {
+            name: DEFAULT_WAREHOUSE_NAME,
+            deletedAt: null,
+          },
+        });
+      }
+      return;
+    }
+
+    await tx.warehouse.create({
+      data: {
+        tenantId,
+        storeId,
+        name: DEFAULT_WAREHOUSE_NAME,
+        code: DEFAULT_WAREHOUSE_CODE,
+      },
+    });
+  }
+
+  private async ensureUserStoreAccessTx(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    storeId: string,
+  ): Promise<void> {
+    await tx.userStore.upsert({
+      where: {
+        userId_storeId: {
+          userId,
+          storeId,
+        },
+      },
+      update: {
+        deletedAt: null,
+      },
+      create: {
+        userId,
+        storeId,
+      },
+    });
+  }
+
+  private async provisionInitialTenantResourcesTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    userId: string,
+  ): Promise<void> {
+    const store = await this.ensurePrimaryStoreTx(tx, tenantId);
+    await this.ensurePrimaryWarehouseTx(tx, tenantId, store.id);
+    await this.ensureUserStoreAccessTx(tx, userId, store.id);
+  }
+
   async register(dto: RegisterDto): Promise<AuthResult> {
     const businessName = dto.businessName.trim();
     if (!businessName) {
@@ -406,6 +533,7 @@ export class AuthService {
         });
 
         await this.assignOwnerRoleToUserTx(tx, tenant.id, created.id);
+        await this.provisionInitialTenantResourcesTx(tx, tenant.id, created.id);
 
         return { tenant, user: created };
       });
@@ -585,6 +713,15 @@ export class AuthService {
             },
           });
 
+          if (tenantWasCreated) {
+            await this.assignOwnerRoleToUserTx(tx, tenantId, existingUser.id);
+            await this.provisionInitialTenantResourcesTx(
+              tx,
+              tenantId,
+              existingUser.id,
+            );
+          }
+
           return { tenant, user };
         }
 
@@ -614,6 +751,11 @@ export class AuthService {
 
         if (tenantWasCreated) {
           await this.assignOwnerRoleToUserTx(tx, tenantId, createdUser.id);
+          await this.provisionInitialTenantResourcesTx(
+            tx,
+            tenantId,
+            createdUser.id,
+          );
         }
 
         return { tenant, user: createdUser };
