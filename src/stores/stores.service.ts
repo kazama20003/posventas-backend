@@ -11,6 +11,8 @@ import { UpdateStoreDto } from './dto/update-store.dto';
 
 const DEFAULT_WAREHOUSE_NAME = 'Almacen principal';
 const DEFAULT_WAREHOUSE_CODE = 'MAIN';
+const DEFAULT_CASH_REGISTER_NAME = 'Caja principal';
+const DEFAULT_CASH_REGISTER_CODE = 'MAIN';
 
 const storeSelect = {
   id: true,
@@ -102,6 +104,15 @@ export class StoresService {
             storeId: store.id,
             name: DEFAULT_WAREHOUSE_NAME,
             code: DEFAULT_WAREHOUSE_CODE,
+          },
+        });
+
+        await tx.cashRegister.create({
+          data: {
+            tenantId,
+            storeId: store.id,
+            name: DEFAULT_CASH_REGISTER_NAME,
+            code: DEFAULT_CASH_REGISTER_CODE,
           },
         });
 

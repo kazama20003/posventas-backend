@@ -1,45 +1,68 @@
 import {
-  Controller,
-  Get,
-  Post,
   Body,
-  Patch,
-  Param,
+  Controller,
   Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
-import { SubscriptionsService } from './subscriptions.service';
+import type { Request } from 'express';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthJwtPayload } from '../auth/types/auth-jwt-payload.type';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
+import { SubscriptionsService } from './subscriptions.service';
 
 @Controller('subscriptions')
+@UseGuards(JwtAuthGuard)
 export class SubscriptionsController {
   constructor(private readonly subscriptionsService: SubscriptionsService) {}
 
   @Post()
-  create(@Body() createSubscriptionDto: CreateSubscriptionDto) {
-    return this.subscriptionsService.create(createSubscriptionDto);
+  create(
+    @Req() req: Request & { user: AuthJwtPayload },
+    @Body() createSubscriptionDto: CreateSubscriptionDto,
+  ) {
+    return this.subscriptionsService.create(
+      req.user.tenantId,
+      createSubscriptionDto,
+    );
   }
 
   @Get()
-  findAll() {
-    return this.subscriptionsService.findAll();
+  findAll(@Req() req: Request & { user: AuthJwtPayload }) {
+    return this.subscriptionsService.findAll(req.user.tenantId);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.subscriptionsService.findOne(+id);
+  findOne(
+    @Req() req: Request & { user: AuthJwtPayload },
+    @Param('id') id: string,
+  ) {
+    return this.subscriptionsService.findOne(req.user.tenantId, id);
   }
 
   @Patch(':id')
   update(
+    @Req() req: Request & { user: AuthJwtPayload },
     @Param('id') id: string,
     @Body() updateSubscriptionDto: UpdateSubscriptionDto,
   ) {
-    return this.subscriptionsService.update(+id, updateSubscriptionDto);
+    return this.subscriptionsService.update(
+      req.user.tenantId,
+      id,
+      updateSubscriptionDto,
+    );
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.subscriptionsService.remove(+id);
+  remove(
+    @Req() req: Request & { user: AuthJwtPayload },
+    @Param('id') id: string,
+  ) {
+    return this.subscriptionsService.remove(req.user.tenantId, id);
   }
 }

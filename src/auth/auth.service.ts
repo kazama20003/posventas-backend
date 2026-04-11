@@ -45,6 +45,8 @@ const DEFAULT_STORE_NAME = 'Sucursal principal';
 const DEFAULT_STORE_CODE = 'MAIN';
 const DEFAULT_WAREHOUSE_NAME = 'Almacen principal';
 const DEFAULT_WAREHOUSE_CODE = 'MAIN';
+const DEFAULT_CASH_REGISTER_NAME = 'Caja principal';
+const DEFAULT_CASH_REGISTER_CODE = 'MAIN';
 
 function toSafeUser<T extends User>(user: T): Omit<T, 'password'> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -450,6 +452,50 @@ export class AuthService {
     });
   }
 
+  private async ensurePrimaryCashRegisterTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    storeId: string,
+  ): Promise<void> {
+    const mainCashRegister = await tx.cashRegister.findFirst({
+      where: {
+        storeId,
+        code: DEFAULT_CASH_REGISTER_CODE,
+      },
+      select: {
+        id: true,
+        deletedAt: true,
+        isActive: true,
+      },
+    });
+
+    if (mainCashRegister) {
+      if (
+        mainCashRegister.deletedAt !== null ||
+        mainCashRegister.isActive === false
+      ) {
+        await tx.cashRegister.update({
+          where: { id: mainCashRegister.id },
+          data: {
+            name: DEFAULT_CASH_REGISTER_NAME,
+            deletedAt: null,
+            isActive: true,
+          },
+        });
+      }
+      return;
+    }
+
+    await tx.cashRegister.create({
+      data: {
+        tenantId,
+        storeId,
+        name: DEFAULT_CASH_REGISTER_NAME,
+        code: DEFAULT_CASH_REGISTER_CODE,
+      },
+    });
+  }
+
   private async ensureUserStoreAccessTx(
     tx: Prisma.TransactionClient,
     userId: string,
@@ -479,6 +525,7 @@ export class AuthService {
   ): Promise<void> {
     const store = await this.ensurePrimaryStoreTx(tx, tenantId);
     await this.ensurePrimaryWarehouseTx(tx, tenantId, store.id);
+    await this.ensurePrimaryCashRegisterTx(tx, tenantId, store.id);
     await this.ensureUserStoreAccessTx(tx, userId, store.id);
   }
 

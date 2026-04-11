@@ -1,14 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { CashController } from './cash.controller';
+import { CashService } from './cash.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { SubscriptionsService } from './subscriptions.service';
 
-describe('SubscriptionsService', () => {
-  let service: SubscriptionsService;
+describe('CashController', () => {
+  let controller: CashController;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
+      controllers: [CashController],
       providers: [
-        SubscriptionsService,
+        CashService,
         {
           provide: PrismaService,
           useValue: {},
@@ -16,10 +18,10 @@ describe('SubscriptionsService', () => {
       ],
     }).compile();
 
-    service = module.get<SubscriptionsService>(SubscriptionsService);
+    controller = module.get<CashController>(CashController);
   });
 
   it('should be defined', () => {
-    expect(service).toBeDefined();
+    expect(controller).toBeDefined();
   });
 });
